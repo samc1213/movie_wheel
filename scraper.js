@@ -14,10 +14,6 @@ function setCache(key, data) {
   cache.set(key, { data, ts: Date.now() });
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 async function fetchPage(url) {
   const res = await fetch(url, {
     headers: {
@@ -50,21 +46,21 @@ async function scrapeWatchlist(username) {
   if (cached) return cached;
 
   const movies = [];
-  for (let page = 1; page <= 5; page++) {
-    if (page > 1) await sleep(200);
-    const url = `https://letterboxd.com/${username}/watchlist/page/${page}/`;
-    let html;
-    try {
-      html = await fetchPage(url);
-    } catch {
-      if (page === 1) throw new Error(`Could not load watchlist for "${username}". Check the username.`);
-      break;
-    }
-    const $ = cheerio.load(html);
+  const urls = Array.from({ length: 5 }, (_, i) =>
+    `https://letterboxd.com/${username}/watchlist/page/${i + 1}/`
+  );
+  const pages = await Promise.all(urls.map((url, i) =>
+    fetchPage(url).catch((err) => {
+      if (i === 0) throw new Error(`Could not load watchlist for "${username}". Check the username.`);
+      return null;
+    })
+  ));
 
-    // Letterboxd uses li.griditem > div[data-target-link] > div.poster.film-poster > img
+  for (const html of pages) {
+    if (!html) continue;
+    const $ = cheerio.load(html);
     const items = $("li.griditem");
-    if (items.length === 0) break;
+    if (items.length === 0) continue;
 
     items.each((_, el) => {
       const container = $(el).find("div[data-target-link]");
@@ -100,22 +96,20 @@ async function scrapeWatched(username) {
   // The /films/ page is often blocked by Cloudflare challenges when scraped.
   // Try to fetch it, but return empty set on failure (graceful degradation).
   const slugs = new Set();
-  for (let page = 1; page <= 10; page++) {
-    if (page > 1) await sleep(200);
-    const url = `https://letterboxd.com/${username}/films/page/${page}/`;
-    let html;
-    try {
-      html = await fetchPage(url);
-    } catch {
-      break;
-    }
+  const urls = Array.from({ length: 10 }, (_, i) =>
+    `https://letterboxd.com/${username}/films/page/${i + 1}/`
+  );
+  const pages = await Promise.all(urls.map((url) =>
+    fetchPage(url).catch(() => null)
+  ));
 
+  for (const html of pages) {
+    if (!html) continue;
     const $ = cheerio.load(html);
     const items = $("li.griditem");
     if (items.length === 0) {
-      // Also try poster-container as a fallback
       const alt = $("li.poster-container");
-      if (alt.length === 0) break;
+      if (alt.length === 0) continue;
       alt.each((_, el) => {
         const div = $(el).find("div[data-target-link]");
         const slug = extractSlugFromLink(div.attr("data-target-link"));

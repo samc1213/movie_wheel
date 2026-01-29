@@ -44,6 +44,7 @@
     if (m) {
       wheelId = m[1];
       showView("lobby");
+      $("#share-url").value = location.href;
       connectWS();
     } else {
       showView("home");
@@ -172,6 +173,7 @@
       const alreadyJoined = state.users.some((u) => u.visitorId === visitorId && u.username);
       if (!alreadyJoined) {
         sessionStorage.removeItem("pendingJoin");
+        $("#lobby-status").textContent = `Loading ${pending}'s data from Letterboxd...`;
         send({ type: "join", username: pending });
       } else {
         sessionStorage.removeItem("pendingJoin");
