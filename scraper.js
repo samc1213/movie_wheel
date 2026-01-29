@@ -15,6 +15,7 @@ function setCache(key, data) {
 }
 
 async function fetchPage(url) {
+  const start = Date.now();
   const res = await fetch(url, {
     headers: {
       "User-Agent":
@@ -23,6 +24,7 @@ async function fetchPage(url) {
       "Accept-Language": "en-US,en;q=0.9",
     },
   });
+  console.log(`[scraper] ${res.status} ${url} (${Date.now() - start}ms)`);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return res.text();
 }

@@ -14,6 +14,7 @@
   let nominations = [];
   let creatorId = null;
   let pendingSpin = null; // { seed, nominations } if spin_start arrived while hidden
+  let joining = false;
 
   // --- DOM refs ---
   const $ = (s) => document.querySelector(s);
@@ -102,6 +103,7 @@
   function handleMessage(msg) {
     if (msg.type === "error") {
       showError(msg.message);
+      joining = false;
       $("#lobby-status").textContent = "";
       return;
     }
@@ -173,7 +175,9 @@
       const alreadyJoined = state.users.some((u) => u.visitorId === visitorId && u.username);
       if (!alreadyJoined) {
         sessionStorage.removeItem("pendingJoin");
+        joining = true;
         $("#lobby-status").textContent = `Loading ${pending}'s data from Letterboxd...`;
+        $("#join-section").classList.add("hidden");
         send({ type: "join", username: pending });
       } else {
         sessionStorage.removeItem("pendingJoin");
@@ -188,8 +192,9 @@
 
     const alreadyJoined = state.users.some((u) => u.visitorId === visitorId);
     if (alreadyJoined) {
+      joining = false;
       $("#join-section").classList.add("hidden");
-    } else {
+    } else if (!joining) {
       $("#join-section").classList.remove("hidden");
     }
 
@@ -201,6 +206,8 @@
       li.innerHTML = `<span>${u.username}</span><span class="badge">${u.watchlistCount} films</span>`;
       ul.appendChild(li);
     });
+
+    if (joining) return; // don't overwrite loading status
 
     const isCreator = state.creatorId === visitorId;
     const startBtn = $("#btn-start");
@@ -226,7 +233,8 @@
   $("#btn-join").addEventListener("click", () => {
     const username = $("#lobby-username").value.trim();
     if (!username) return;
-    $("#lobby-status").textContent = "Loading...";
+    joining = true;
+    $("#lobby-status").textContent = `Loading ${username}'s data from Letterboxd...`;
     send({ type: "join", username });
   });
 
