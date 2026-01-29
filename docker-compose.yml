@@ -1,6 +1,6 @@
 services:
   movie-wheel:
-    build: .
+    image: ghcr.io/samc1213/movie-wheel:latest
     ports:
       - "3000:3000"
     environment:

@@ -13,6 +13,7 @@
   let selectedSlug = null;
   let nominations = [];
   let creatorId = null;
+  let pendingSpin = null; // { seed, nominations } if spin_start arrived while hidden
 
   // --- DOM refs ---
   const $ = (s) => document.querySelector(s);
@@ -122,7 +123,11 @@
 
     if (msg.type === "spin_start") {
       nominations = msg.nominations;
-      startSpinAnimation(msg.seed, msg.nominations);
+      if (document.hidden) {
+        pendingSpin = { seed: msg.seed, nominations: msg.nominations };
+      } else {
+        startSpinAnimation(msg.seed, msg.nominations);
+      }
       return;
     }
   }
@@ -153,8 +158,12 @@
         drawWheel(nominations);
       }
     } else if (state.phase === "result") {
-      showView("result");
-      renderResult(state);
+      if (pendingSpin) {
+        // Will transition to result after animation completes
+      } else {
+        showView("result");
+        renderResult(state);
+      }
     }
 
     // Auto-join if pending
@@ -426,6 +435,14 @@
 
       if (t < 1) {
         requestAnimationFrame(animate);
+      } else {
+        // Animation done — show result after a brief pause
+        setTimeout(() => {
+          if (currentPhase === "result" || currentPhase === "spinning") {
+            showView("result");
+            renderResult({ result: noms[winnerIdx] });
+          }
+        }, 500);
       }
     }
 
@@ -458,6 +475,15 @@
     }
     $("#result-title").textContent = state.result.title;
   }
+
+  // --- Replay spin on tab focus ---
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && pendingSpin) {
+      const { seed, nominations: noms } = pendingSpin;
+      pendingSpin = null;
+      startSpinAnimation(seed, noms);
+    }
+  });
 
   // --- Init ---
   route();
