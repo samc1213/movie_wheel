@@ -130,9 +130,11 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const wheelId = url.searchParams.get("wheel");
   const visitorId = url.searchParams.get("visitorId");
+  console.log(`[ws] connection: wheel=${wheelId} visitor=${visitorId}`);
 
   const wheel = wheels.get(wheelId);
   if (!wheel) {
+    console.log(`[ws] wheel not found: ${wheelId}`);
     ws.send(JSON.stringify({ type: "error", message: "Wheel not found" }));
     ws.close();
     return;
@@ -156,6 +158,7 @@ wss.on("connection", (ws, req) => {
     }
 
     if (msg.type === "join") {
+      console.log(`[ws] join request: visitor=${visitorId} username=${msg.username}`);
       if (wheel.phase !== "lobby") {
         ws.send(JSON.stringify({ type: "error", message: "Wheel is no longer in lobby phase" }));
         return;
@@ -178,12 +181,15 @@ wss.on("connection", (ws, req) => {
       }
 
       ws.send(JSON.stringify({ type: "scraping", message: `Loading ${username}'s data from Letterboxd...` }));
+      console.log(`[ws] starting scrape for "${username}"`);
+      const scrapeStart = Date.now();
 
       try {
         const [watchlist, watched] = await Promise.all([
           scrapeWatchlist(username),
           scrapeWatched(username),
         ]);
+        console.log(`[ws] scrape done for "${username}" in ${Date.now() - scrapeStart}ms (${watchlist.length} watchlist, ${watched.size} watched)`);
 
         const user = {
           username,
@@ -197,6 +203,7 @@ wss.on("connection", (ws, req) => {
 
         broadcast(wheel, { type: "state", ...wheelState(wheel) });
       } catch (err) {
+        console.log(`[ws] scrape failed for "${username}": ${err.message}`);
         ws.send(JSON.stringify({ type: "error", message: err.message }));
       }
 

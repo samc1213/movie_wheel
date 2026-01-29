@@ -16,6 +16,7 @@ function setCache(key, data) {
 
 async function fetchPage(url) {
   const start = Date.now();
+  console.log(`[scraper] fetching ${url}`);
   const res = await fetch(url, {
     headers: {
       "User-Agent":
@@ -47,17 +48,20 @@ async function scrapeWatchlist(username) {
   const cached = getCached(key);
   if (cached) return cached;
 
+  console.log(`[scraper] scraping watchlist for "${username}"`);
   const movies = [];
   const urls = Array.from({ length: 5 }, (_, i) =>
     `https://letterboxd.com/${username}/watchlist/page/${i + 1}/`
   );
   const pages = await Promise.all(urls.map((url, i) =>
     fetchPage(url).catch((err) => {
+      console.log(`[scraper] watchlist page ${i + 1} failed: ${err.message}`);
       if (i === 0) throw new Error(`Could not load watchlist for "${username}". Check the username.`);
       return null;
     })
   ));
 
+  console.log(`[scraper] watchlist fetch complete, parsing ${pages.filter(Boolean).length} pages`);
   for (const html of pages) {
     if (!html) continue;
     const $ = cheerio.load(html);
@@ -86,6 +90,7 @@ async function scrapeWatchlist(username) {
   if (movies.length === 0) {
     throw new Error(`Watchlist for "${username}" is empty or could not be parsed.`);
   }
+  console.log(`[scraper] watchlist for "${username}": ${movies.length} movies`);
   setCache(key, movies);
   return movies;
 }
@@ -97,12 +102,16 @@ async function scrapeWatched(username) {
 
   // The /films/ page is often blocked by Cloudflare challenges when scraped.
   // Try to fetch it, but return empty set on failure (graceful degradation).
+  console.log(`[scraper] scraping watched films for "${username}"`);
   const slugs = new Set();
   const urls = Array.from({ length: 10 }, (_, i) =>
     `https://letterboxd.com/${username}/films/page/${i + 1}/`
   );
-  const pages = await Promise.all(urls.map((url) =>
-    fetchPage(url).catch(() => null)
+  const pages = await Promise.all(urls.map((url, i) =>
+    fetchPage(url).catch((err) => {
+      console.log(`[scraper] watched page ${i + 1} failed: ${err.message}`);
+      return null;
+    })
   ));
 
   for (const html of pages) {
@@ -127,6 +136,7 @@ async function scrapeWatched(username) {
     });
   }
 
+  console.log(`[scraper] watched films for "${username}": ${slugs.size} slugs`);
   setCache(key, slugs);
   return slugs;
 }
@@ -136,7 +146,7 @@ async function resolvePosterUrl(slug, filmId) {
   const cached = getCached(key);
   if (cached) return cached;
 
-  // Try constructed CDN URL first (works for most films)
+  console.log(`[scraper] resolving poster for "${slug}"`);
   if (filmId) {
     const digits = String(filmId).split("").join("/");
     const cdnUrl = `https://a.ltrbxd.com/resized/film-poster/${digits}/${filmId}-${slug}-0-230-0-345-crop.jpg`;

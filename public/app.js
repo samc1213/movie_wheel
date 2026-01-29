@@ -15,6 +15,7 @@
   let creatorId = null;
   let pendingSpin = null; // { seed, nominations } if spin_start arrived while hidden
   let joining = false;
+  let shouldReconnect = true;
 
   // --- DOM refs ---
   const $ = (s) => document.querySelector(s);
@@ -80,6 +81,7 @@
   // --- WebSocket ---
   function connectWS() {
     if (ws) ws.close();
+    shouldReconnect = true;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws?wheel=${wheelId}&visitorId=${visitorId}`);
 
@@ -89,9 +91,8 @@
     };
 
     ws.onclose = () => {
-      // Reconnect after 2s
       setTimeout(() => {
-        if (wheelId) connectWS();
+        if (wheelId && shouldReconnect) connectWS();
       }, 2000);
     };
   }
@@ -102,6 +103,11 @@
 
   function handleMessage(msg) {
     if (msg.type === "error") {
+      if (msg.message === "Wheel not found") {
+        shouldReconnect = false;
+        wheelId = null;
+        location.hash = "#/";
+      }
       showError(msg.message);
       joining = false;
       $("#lobby-status").textContent = "";
