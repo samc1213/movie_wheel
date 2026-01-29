@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:letterboxd.com)",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(echo:*)",
+      "Bash(dir:*)",
+      "Bash(npm config:*)",
+      "Bash(npm root:*)",
+      "Bash(npm --version)",
+      "Bash(node --version:*)"
+    ]
+  }
+}

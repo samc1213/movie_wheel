@@ -1,0 +1,7 @@
+services:
+  movie-wheel:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - TMDB_TOKEN=${TMDB_TOKEN}

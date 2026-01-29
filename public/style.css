@@ -1,0 +1,240 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+#app {
+  max-width: 800px;
+  width: 100%;
+}
+
+.hidden { display: none !important; }
+
+h1 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  color: #58a6ff;
+}
+
+h2 { margin: 1rem 0 0.5rem; }
+
+p { color: #8b949e; margin-bottom: 1rem; }
+
+.form-group {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+input[type="text"] {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #161b22;
+  color: #e6edf3;
+  font-size: 1rem;
+}
+
+input[type="text"]:focus { outline: none; border-color: #58a6ff; }
+
+button {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 6px;
+  background: #238636;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover { background: #2ea043; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.share-box {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.share-box label { color: #8b949e; white-space: nowrap; }
+.share-box input { font-size: 0.85rem; }
+
+.status {
+  color: #d29922;
+  margin-bottom: 0.5rem;
+  min-height: 1.2em;
+}
+
+ul {
+  list-style: none;
+  margin-bottom: 1rem;
+}
+
+ul li {
+  padding: 0.4rem 0.6rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  margin-bottom: 0.3rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+ul li .badge {
+  font-size: 0.8rem;
+  color: #3fb950;
+}
+
+/* Poster grid */
+.poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.poster-card {
+  position: relative;
+  cursor: pointer;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.2s, opacity 0.2s;
+}
+
+.poster-card:hover { border-color: #58a6ff; }
+.poster-card.seen { opacity: 0.3; pointer-events: none; }
+.poster-card.selected { border-color: #3fb950; }
+
+.poster-card img {
+  width: 100%;
+  display: block;
+}
+
+.poster-card .poster-title {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.8);
+  padding: 0.3rem;
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+/* Search dropdown */
+.search-box {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+.search-box input {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #161b22;
+  color: #e6edf3;
+  font-size: 1rem;
+}
+
+.search-box input:focus { outline: none; border-color: #58a6ff; }
+
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.dropdown li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+  border-bottom: 1px solid #21262d;
+}
+
+.dropdown li:hover { background: #21262d; }
+
+.dropdown li img {
+  width: 40px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.dropdown li .search-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.dropdown li .search-title { font-size: 0.9rem; }
+.dropdown li .search-year { font-size: 0.75rem; color: #8b949e; }
+
+/* Canvas */
+#wheel-canvas {
+  display: block;
+  margin: 1rem auto;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Result */
+#result-card {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+#result-poster {
+  max-width: 250px;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+#result-title { font-size: 1.5rem; }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #da3633;
+  color: #fff;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  z-index: 100;
+  max-width: 90%;
+  text-align: center;
+}
+
+@media (max-width: 500px) {
+  h1 { font-size: 1.4rem; }
+  .poster-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+  #wheel-canvas { width: 100%; }
+}

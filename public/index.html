@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Movie Wheel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Home -->
+    <div id="view-home" class="view">
+      <h1>Movie Wheel</h1>
+      <p>Pick a movie together using your Letterboxd watchlists.</p>
+      <div class="form-group">
+        <input type="text" id="home-username" placeholder="Your Letterboxd username" autocomplete="off" autofocus>
+        <button id="btn-create">Create Wheel</button>
+      </div>
+    </div>
+
+    <!-- Lobby -->
+    <div id="view-lobby" class="view hidden">
+      <h1>Movie Wheel</h1>
+      <div class="share-box">
+        <label>Share this link:</label>
+        <input type="text" id="share-url" readonly>
+        <button id="btn-copy">Copy</button>
+      </div>
+      <div id="join-section" class="form-group">
+        <input type="text" id="lobby-username" placeholder="Your Letterboxd username" autocomplete="off">
+        <button id="btn-join">Join</button>
+      </div>
+      <div id="lobby-status" class="status"></div>
+      <h2>Users (<span id="user-count">0</span>)</h2>
+      <ul id="user-list"></ul>
+      <button id="btn-start" class="hidden">Start Nominations</button>
+    </div>
+
+    <!-- Nominating -->
+    <div id="view-nominating" class="view hidden">
+      <h1>Pick Your Nomination</h1>
+      <p id="nom-status"></p>
+      <div id="search-entry" class="search-box">
+        <input type="text" id="search-input" placeholder="Or search for a movie..." autocomplete="off">
+        <ul id="search-results" class="dropdown hidden"></ul>
+      </div>
+      <div id="watchlist-grid" class="poster-grid"></div>
+    </div>
+
+    <!-- Spinning -->
+    <div id="view-spinning" class="view hidden">
+      <h1>Spin the Wheel!</h1>
+      <div id="spin-status" class="status"></div>
+      <canvas id="wheel-canvas" width="500" height="500"></canvas>
+      <button id="btn-spin">Spin!</button>
+    </div>
+
+    <!-- Result -->
+    <div id="view-result" class="view hidden">
+      <h1>The Winner!</h1>
+      <div id="result-card">
+        <img id="result-poster" src="" alt="">
+        <h2 id="result-title"></h2>
+      </div>
+    </div>
+  </div>
+
+  <div id="error-toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
