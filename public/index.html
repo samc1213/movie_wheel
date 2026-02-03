@@ -33,7 +33,18 @@
       <div id="lobby-status" class="status"></div>
       <h2>Users (<span id="user-count">0</span>)</h2>
       <ul id="user-list"></ul>
-      <button id="btn-start" class="hidden">Start Nominations</button>
+      <div id="mode-selector" class="mode-selector hidden">
+        <p class="mode-label">Selection Mode</p>
+        <label class="mode-option">
+          <input type="radio" name="selection-mode" value="manual" checked>
+          <span>Manual</span> - Each user picks their nomination
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="selection-mode" value="auto">
+          <span>Auto</span> - Random from all watchlists
+        </label>
+      </div>
+      <button id="btn-start" class="hidden">Start</button>
     </div>
 
     <!-- Nominating -->
@@ -61,6 +72,7 @@
       <div id="result-card">
         <img id="result-poster" src="" alt="">
         <h2 id="result-title"></h2>
+        <p id="result-subtitle" class="result-subtitle hidden"></p>
       </div>
     </div>
   </div>

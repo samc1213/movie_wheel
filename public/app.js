@@ -13,7 +13,8 @@
   let selectedSlug = null;
   let nominations = [];
   let creatorId = null;
-  let pendingSpin = null; // { seed, nominations } if spin_start arrived while hidden
+  let pendingSpin = null; // { seed, nominations, mode?, entries?, winnerIdx? } if spin_start arrived while hidden
+  let selectionMode = "manual";
   let joining = false;
   let shouldReconnect = true;
 
@@ -131,11 +132,21 @@
     }
 
     if (msg.type === "spin_start") {
-      nominations = msg.nominations;
-      if (document.hidden) {
-        pendingSpin = { seed: msg.seed, nominations: msg.nominations };
+      if (msg.mode === "auto") {
+        // Auto mode: entries are users, not nominations
+        if (document.hidden) {
+          pendingSpin = { seed: msg.seed, entries: msg.entries, winnerIdx: msg.winnerIdx, mode: "auto" };
+        } else {
+          startSpinAnimationAuto(msg.seed, msg.entries, msg.winnerIdx);
+        }
       } else {
-        startSpinAnimation(msg.seed, msg.nominations);
+        // Manual mode: existing logic
+        nominations = msg.nominations;
+        if (document.hidden) {
+          pendingSpin = { seed: msg.seed, nominations: msg.nominations };
+        } else {
+          startSpinAnimation(msg.seed, msg.nominations);
+        }
       }
       return;
     }
@@ -145,6 +156,7 @@
     const prevPhase = currentPhase;
     currentPhase = state.phase;
     if (state.creatorId) creatorId = state.creatorId;
+    if (state.selectionMode) selectionMode = state.selectionMode;
 
     if (state.phase === "lobby") {
       showView("lobby");
@@ -162,9 +174,18 @@
         spinBtn.classList.add("hidden");
         $("#spin-status").textContent = "Waiting for the wheel creator to spin...";
       }
-      if (!prevPhase || prevPhase === "nominating") {
-        nominations = state.users.filter((u) => u.nomination).map((u) => u.nomination);
-        drawWheel(nominations);
+      if (!prevPhase || prevPhase === "nominating" || prevPhase === "lobby") {
+        if (selectionMode === "auto") {
+          // Auto mode: build user entries
+          const entries = state.users
+            .filter((u) => u.watchlistCount > 0)
+            .map((u) => ({ username: u.username }));
+          drawWheel(entries, 0, "auto");
+        } else {
+          // Manual mode: use nominations
+          nominations = state.users.filter((u) => u.nomination).map((u) => u.nomination);
+          drawWheel(nominations, 0, "manual");
+        }
       }
     } else if (state.phase === "result") {
       if (pendingSpin) {
@@ -217,17 +238,22 @@
 
     const isCreator = state.creatorId === visitorId;
     const startBtn = $("#btn-start");
+    const modeSelector = $("#mode-selector");
     if (isCreator && state.users.length >= 2) {
       startBtn.classList.remove("hidden");
+      modeSelector.classList.remove("hidden");
       $("#lobby-status").textContent = "";
     } else if (isCreator && state.users.length === 1) {
       startBtn.classList.add("hidden");
+      modeSelector.classList.add("hidden");
       $("#lobby-status").textContent = "Share the link above — at least one other person needs to join before you can start.";
     } else if (!isCreator && alreadyJoined) {
       startBtn.classList.add("hidden");
-      $("#lobby-status").textContent = "Waiting for the wheel creator to start nominations.";
+      modeSelector.classList.add("hidden");
+      $("#lobby-status").textContent = "Waiting for the wheel creator to start.";
     } else {
       startBtn.classList.add("hidden");
+      modeSelector.classList.add("hidden");
       $("#lobby-status").textContent = "";
     }
   }
@@ -250,7 +276,8 @@
   });
 
   $("#btn-start").addEventListener("click", () => {
-    send({ type: "start_nominations" });
+    const mode = document.querySelector('input[name="selection-mode"]:checked')?.value || "manual";
+    send({ type: "start_nominations", selectionMode: mode });
   });
 
   // --- Nomination ---
@@ -369,13 +396,13 @@
     };
   }
 
-  function drawWheel(noms, rotation = 0) {
+  function drawWheel(entries, rotation = 0, mode = "manual") {
     const canvas = $("#wheel-canvas");
     const ctx = canvas.getContext("2d");
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
     const r = cx - 20;
-    const n = noms.length;
+    const n = entries.length;
     const slice = (2 * Math.PI) / n;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -396,14 +423,20 @@
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Text
+      // Text label based on mode
       ctx.save();
       ctx.rotate(a0 + slice / 2);
       ctx.textAlign = "right";
       ctx.fillStyle = "#fff";
       ctx.font = "bold 14px sans-serif";
-      const title = noms[i].title.length > 20 ? noms[i].title.slice(0, 18) + "..." : noms[i].title;
-      ctx.fillText(title, r - 15, 5);
+      let label;
+      if (mode === "auto") {
+        label = entries[i].username; // Show username for auto mode
+      } else {
+        label = entries[i].title; // Show movie title for manual mode
+      }
+      if (label.length > 18) label = label.slice(0, 16) + "...";
+      ctx.fillText(label, r - 15, 5);
       ctx.restore();
     }
 
@@ -465,6 +498,48 @@
     requestAnimationFrame(animate);
   }
 
+  function startSpinAnimationAuto(seed, entries, winnerIdx) {
+    showView("spinning");
+    const rng = mulberry32(seed);
+
+    const n = entries.length;
+    const slice = (2 * Math.PI) / n;
+    // Target: pointer at top (angle 0) points to winner slice
+    const targetCenter = winnerIdx * slice + slice / 2;
+    const targetRotation = -Math.PI / 2 - targetCenter;
+    // Add 5+ full spins
+    const fullSpins = 5 + Math.floor(rng() * 3);
+    const totalRotation = fullSpins * 2 * Math.PI + ((targetRotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+    const duration = 4500;
+    const start = performance.now();
+
+    $("#btn-spin").classList.add("hidden");
+
+    function animate(now) {
+      const elapsed = now - start;
+      const t = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const ease = 1 - Math.pow(1 - t, 3);
+      const currentRotation = totalRotation * ease;
+
+      drawWheel(entries, currentRotation, "auto");
+
+      if (t < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        // Animation done — wait for result state from server
+        setTimeout(() => {
+          if (currentPhase === "result" || currentPhase === "spinning") {
+            // Server will send full result with movie info
+          }
+        }, 500);
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
   $("#btn-spin").addEventListener("click", () => {
     send({ type: "spin" });
   });
@@ -490,14 +565,29 @@
       poster.classList.add("hidden");
     }
     $("#result-title").textContent = state.result.title;
+
+    // Show subtitle for auto mode
+    const subtitle = $("#result-subtitle");
+    if (state.result.selectedFrom) {
+      subtitle.textContent = `Selected from ${state.result.selectedFrom}'s watchlist`;
+      subtitle.classList.remove("hidden");
+    } else {
+      subtitle.classList.add("hidden");
+    }
   }
 
   // --- Replay spin on tab focus ---
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && pendingSpin) {
-      const { seed, nominations: noms } = pendingSpin;
-      pendingSpin = null;
-      startSpinAnimation(seed, noms);
+      if (pendingSpin.mode === "auto") {
+        const { seed, entries, winnerIdx } = pendingSpin;
+        pendingSpin = null;
+        startSpinAnimationAuto(seed, entries, winnerIdx);
+      } else {
+        const { seed, nominations: noms } = pendingSpin;
+        pendingSpin = null;
+        startSpinAnimation(seed, noms);
+      }
     }
   });
 

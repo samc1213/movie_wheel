@@ -25,6 +25,7 @@ function createWheel() {
   const wheel = {
     id,
     phase: "lobby",
+    selectionMode: "manual", // "manual" | "auto"
     users: new Map(),
     result: null,
     spinSeed: null,
@@ -49,6 +50,7 @@ function wheelState(wheel) {
   return {
     id: wheel.id,
     phase: wheel.phase,
+    selectionMode: wheel.selectionMode,
     users,
     result: wheel.result,
     creatorId: wheel.creatorId,
@@ -217,29 +219,52 @@ wss.on("connection", (ws, req) => {
         ws.send(JSON.stringify({ type: "error", message: "Need at least 2 users" }));
         return;
       }
-      wheel.phase = "nominating";
 
-      // Send each user their eligible watchlist
-      for (const [vid, u] of wheel.users) {
-        const otherWatched = new Set();
-        for (const [ovid, ou] of wheel.users) {
-          if (ovid !== vid) {
-            for (const s of ou.watchedSlugs) otherWatched.add(s);
+      const mode = msg.selectionMode || "manual";
+      wheel.selectionMode = mode;
+
+      if (mode === "auto") {
+        // Check if any users have movies in their watchlist
+        let hasMovies = false;
+        for (const u of wheel.users.values()) {
+          if (u.watchlist.length > 0) {
+            hasMovies = true;
+            break;
           }
         }
-        const eligible = u.watchlist.map((m) => ({
-          ...m,
-          seenByOther: otherWatched.has(m.slug),
-        }));
-        if (u.ws && u.ws.readyState === 1) {
-          u.ws.send(JSON.stringify({
-            type: "watchlist",
-            movies: eligible,
-          }));
+        if (!hasMovies) {
+          ws.send(JSON.stringify({ type: "error", message: "No movies available in any watchlist" }));
+          return;
         }
-      }
+        // Skip nomination phase, go directly to spinning
+        wheel.phase = "spinning";
+        broadcast(wheel, { type: "state", ...wheelState(wheel) });
+      } else {
+        // Manual mode: existing logic
+        wheel.phase = "nominating";
 
-      broadcast(wheel, { type: "state", ...wheelState(wheel) });
+        // Send each user their eligible watchlist
+        for (const [vid, u] of wheel.users) {
+          const otherWatched = new Set();
+          for (const [ovid, ou] of wheel.users) {
+            if (ovid !== vid) {
+              for (const s of ou.watchedSlugs) otherWatched.add(s);
+            }
+          }
+          const eligible = u.watchlist.map((m) => ({
+            ...m,
+            seenByOther: otherWatched.has(m.slug),
+          }));
+          if (u.ws && u.ws.readyState === 1) {
+            u.ws.send(JSON.stringify({
+              type: "watchlist",
+              movies: eligible,
+            }));
+          }
+        }
+
+        broadcast(wheel, { type: "state", ...wheelState(wheel) });
+      }
 
     } else if (msg.type === "nominate") {
       if (wheel.phase !== "nominating") return;
@@ -285,27 +310,79 @@ wss.on("connection", (ws, req) => {
         return;
       }
 
-      const nominations = [];
-      for (const u of wheel.users.values()) {
-        nominations.push(u.nomination);
+      if (wheel.selectionMode === "auto") {
+        // Auto mode: build entries for users with movies
+        const entries = [];
+        const userList = [];
+        for (const u of wheel.users.values()) {
+          if (u.watchlist.length > 0) {
+            userList.push(u);
+            entries.push({ username: u.username });
+          }
+        }
+
+        if (userList.length === 0) {
+          ws.send(JSON.stringify({ type: "error", message: "No movies available" }));
+          return;
+        }
+
+        // Equal probability per user
+        wheel.spinSeed = crypto.randomInt(0, 2 ** 32);
+        const winnerIdx = wheel.spinSeed % userList.length;
+
+        const winningUser = userList[winnerIdx];
+        // Pick random movie from winner's watchlist
+        const movieSeed = crypto.randomInt(0, winningUser.watchlist.length);
+        const winningMovie = winningUser.watchlist[movieSeed];
+
+        // Resolve poster URL
+        const posterUrl = await resolvePosterUrl(winningMovie.slug, winningMovie.filmId || "");
+
+        wheel.result = {
+          slug: winningMovie.slug,
+          title: winningMovie.title,
+          poster: posterUrl || "",
+          selectedFrom: winningUser.username,
+        };
+        wheel.phase = "result";
+
+        broadcast(wheel, {
+          type: "spin_start",
+          seed: wheel.spinSeed,
+          entries,
+          winnerIdx,
+          mode: "auto",
+        });
+
+        // Broadcast result after animation delay
+        setTimeout(() => {
+          broadcast(wheel, { type: "state", ...wheelState(wheel) });
+        }, 5000);
+
+      } else {
+        // Manual mode: existing logic
+        const nominations = [];
+        for (const u of wheel.users.values()) {
+          nominations.push(u.nomination);
+        }
+
+        wheel.spinSeed = crypto.randomInt(0, 2 ** 32);
+        broadcast(wheel, {
+          type: "spin_start",
+          seed: wheel.spinSeed,
+          nominations,
+        });
+
+        // Compute winner server-side too
+        const winnerIdx = wheel.spinSeed % nominations.length;
+        wheel.result = nominations[winnerIdx];
+        wheel.phase = "result";
+
+        // Broadcast result after animation delay
+        setTimeout(() => {
+          broadcast(wheel, { type: "state", ...wheelState(wheel) });
+        }, 5000);
       }
-
-      wheel.spinSeed = crypto.randomInt(0, 2 ** 32);
-      broadcast(wheel, {
-        type: "spin_start",
-        seed: wheel.spinSeed,
-        nominations,
-      });
-
-      // Compute winner server-side too
-      const winnerIdx = wheel.spinSeed % nominations.length;
-      wheel.result = nominations[winnerIdx];
-      wheel.phase = "result";
-
-      // Broadcast result after animation delay
-      setTimeout(() => {
-        broadcast(wheel, { type: "state", ...wheelState(wheel) });
-      }, 5000);
     }
   });
 

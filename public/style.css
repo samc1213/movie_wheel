@@ -218,6 +218,43 @@ ul li .badge {
 
 #result-title { font-size: 1.5rem; }
 
+/* Result subtitle */
+.result-subtitle {
+  color: #8b949e;
+  font-size: 1rem;
+  margin-top: 0.5rem;
+}
+
+/* Mode selector */
+.mode-selector {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.mode-selector .mode-label {
+  color: #8b949e;
+  margin-bottom: 0.5rem;
+}
+
+.mode-option {
+  display: block;
+  padding: 0.5rem;
+  cursor: pointer;
+  color: #8b949e;
+}
+
+.mode-option input {
+  margin-right: 0.5rem;
+}
+
+.mode-option span {
+  font-weight: 600;
+  color: #e6edf3;
+}
+
 /* Toast */
 .toast {
   position: fixed;
