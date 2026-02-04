@@ -50,7 +50,7 @@ async function scrapeWatchlist(username) {
 
   console.log(`[scraper] scraping watchlist for "${username}"`);
   const movies = [];
-  const urls = Array.from({ length: 5 }, (_, i) =>
+  const urls = Array.from({ length: 20 }, (_, i) =>
     `https://letterboxd.com/${username}/watchlist/page/${i + 1}/`
   );
   const pages = await Promise.all(urls.map((url, i) =>

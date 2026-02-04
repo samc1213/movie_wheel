@@ -18,17 +18,26 @@
   let joining = false;
   let shouldReconnect = true;
 
+  // Auto mode Phase 1 state
+  let autoSelectedMovies = [];       // Completed selections
+  let pendingAutoSpins = [];         // Queued spins if tab is hidden
+
   // --- DOM refs ---
   const $ = (s) => document.querySelector(s);
   const views = {
     home: $("#view-home"),
     lobby: $("#view-lobby"),
+    "auto-selecting": $("#view-auto-selecting"),
     nominating: $("#view-nominating"),
     spinning: $("#view-spinning"),
     result: $("#view-result"),
   };
 
   function showView(name) {
+    // Stop confetti when leaving result view
+    if (name !== "result" && typeof stopConfetti === "function") {
+      stopConfetti();
+    }
     Object.values(views).forEach((v) => v.classList.add("hidden"));
     views[name].classList.remove("hidden");
   }
@@ -132,8 +141,15 @@
     }
 
     if (msg.type === "spin_start") {
-      if (msg.mode === "auto") {
-        // Auto mode: entries are users, not nominations
+      if (msg.mode === "auto_final") {
+        // Auto mode final wheel: entries have poster URLs
+        if (document.hidden) {
+          pendingSpin = { seed: msg.seed, entries: msg.entries, winnerIdx: msg.winnerIdx, mode: "auto_final" };
+        } else {
+          startSpinAnimationAutoFinal(msg.seed, msg.entries, msg.winnerIdx);
+        }
+      } else if (msg.mode === "auto") {
+        // Legacy auto mode (shouldn't happen with new flow)
         if (document.hidden) {
           pendingSpin = { seed: msg.seed, entries: msg.entries, winnerIdx: msg.winnerIdx, mode: "auto" };
         } else {
@@ -150,6 +166,32 @@
       }
       return;
     }
+
+    // Auto selection Phase 1 messages
+    if (msg.type === "auto_select_start") {
+      autoSelectedMovies = [];
+      showView("auto-selecting");
+      $("#selecting-progress").textContent = `Selecting from ${msg.users.length} users...`;
+      $("#selecting-current-user").textContent = "";
+      $("#selected-movies-grid").innerHTML = "";
+      return;
+    }
+
+    if (msg.type === "auto_select_spin") {
+      if (document.hidden) {
+        // Queue for replay when tab is visible
+        pendingAutoSpins.push(msg);
+      } else {
+        runMiniWheelAnimation(msg);
+      }
+      return;
+    }
+
+    if (msg.type === "auto_selections_complete") {
+      autoSelectedMovies = msg.selections;
+      // Transition to spinning view will happen via state update
+      return;
+    }
   }
 
   function updateState(state) {
@@ -161,6 +203,24 @@
     if (state.phase === "lobby") {
       showView("lobby");
       renderLobby(state);
+    } else if (state.phase === "auto_selecting") {
+      showView("auto-selecting");
+      // Initialize from state for users who join mid-selection
+      if (state.selectingUsers && state.selectingUsers.length > 0) {
+        const total = state.selectingUsers.length;
+        const current = state.currentSelectingIndex || 0;
+        $("#selecting-progress").textContent = `User ${current + 1} of ${total}`;
+        $("#selecting-current-user").textContent = `${state.selectingUsers[current]}'s turn`;
+      }
+      // Show already-selected movies
+      if (state.autoSelections && state.autoSelections.length > 0) {
+        const grid = $("#selected-movies-grid");
+        grid.innerHTML = "";
+        autoSelectedMovies = [];
+        state.autoSelections.forEach(sel => {
+          addSelectedMovieCard(sel.username, sel.movie);
+        });
+      }
     } else if (state.phase === "nominating") {
       showView("nominating");
       renderNominationStatus(state);
@@ -174,9 +234,15 @@
         spinBtn.classList.add("hidden");
         $("#spin-status").textContent = "Waiting for the wheel creator to spin...";
       }
-      if (!prevPhase || prevPhase === "nominating" || prevPhase === "lobby") {
-        if (selectionMode === "auto") {
-          // Auto mode: build user entries
+      if (!prevPhase || prevPhase === "nominating" || prevPhase === "lobby" || prevPhase === "auto_selecting") {
+        if (selectionMode === "auto" && autoSelectedMovies.length > 0) {
+          // Auto mode with Phase 1 selections: draw wheel with movie titles
+          const entries = autoSelectedMovies.map(s => ({
+            title: s.movie.title,
+          }));
+          drawWheel(entries, 0, "manual");
+        } else if (selectionMode === "auto") {
+          // Fallback for old auto mode
           const entries = state.users
             .filter((u) => u.watchlistCount > 0)
             .map((u) => ({ username: u.username }));
@@ -540,13 +606,309 @@
     requestAnimationFrame(animate);
   }
 
+  // --- Auto Mode Phase 1 Functions ---
+
+  function runMiniWheelAnimation(data) {
+    const { username, userIndex, totalUsers, movies, seed, winnerIdx, selectedMovie } = data;
+
+    showView("auto-selecting");
+    $("#selecting-progress").textContent = `User ${userIndex + 1} of ${totalUsers}`;
+    $("#selecting-current-user").textContent = `${username}'s turn`;
+
+    const canvas = $("#mini-wheel-canvas");
+    const ctx = canvas.getContext("2d");
+    const rng = mulberry32(seed);
+
+    const n = movies.length;
+    const slice = (2 * Math.PI) / n;
+    const targetCenter = winnerIdx * slice + slice / 2;
+    const targetRotation = -Math.PI / 2 - targetCenter;
+    const fullSpins = 3 + Math.floor(rng() * 2);
+    const totalRotation = fullSpins * 2 * Math.PI + ((targetRotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+    const duration = 3000;
+    const start = performance.now();
+
+    function animate(now) {
+      const elapsed = now - start;
+      const t = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      const currentRotation = totalRotation * ease;
+
+      drawMiniWheel(ctx, movies, currentRotation, canvas.width, canvas.height);
+
+      if (t < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        // Animation done - add selected movie to grid
+        addSelectedMovieCard(username, selectedMovie);
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  function drawMiniWheel(ctx, entries, rotation, width, height) {
+    const cx = width / 2;
+    const cy = height / 2;
+    const r = cx - 15;
+    const n = entries.length;
+    const slice = (2 * Math.PI) / n;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rotation);
+
+    for (let i = 0; i < n; i++) {
+      const a0 = i * slice;
+      const a1 = a0 + slice;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, r, a0, a1);
+      ctx.closePath();
+      ctx.fillStyle = COLORS[i % COLORS.length];
+      ctx.fill();
+      ctx.strokeStyle = "#0d1117";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Text label
+      ctx.save();
+      ctx.rotate(a0 + slice / 2);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 11px sans-serif";
+      let label = entries[i].title;
+      if (label.length > 16) label = label.slice(0, 14) + "...";
+      ctx.fillText(label, r - 10, 4);
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    // Pointer (top)
+    ctx.beginPath();
+    ctx.moveTo(cx, 8);
+    ctx.lineTo(cx - 10, 0);
+    ctx.lineTo(cx + 10, 0);
+    ctx.closePath();
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+  }
+
+  function addSelectedMovieCard(username, movie) {
+    const grid = $("#selected-movies-grid");
+    const card = document.createElement("div");
+    card.className = "selected-movie-card";
+
+    if (movie.poster) {
+      const img = document.createElement("img");
+      img.src = movie.poster;
+      img.alt = movie.title;
+      card.appendChild(img);
+    }
+
+    const titleBadge = document.createElement("div");
+    titleBadge.className = "movie-title-badge";
+    titleBadge.textContent = movie.title;
+    card.appendChild(titleBadge);
+
+    const userBadge = document.createElement("div");
+    userBadge.className = "username-badge";
+    userBadge.textContent = username;
+    card.appendChild(userBadge);
+
+    grid.appendChild(card);
+
+    // Store in autoSelectedMovies for later
+    autoSelectedMovies.push({ username, movie });
+  }
+
+  function startSpinAnimationAutoFinal(seed, entries, winnerIdx) {
+    showView("spinning");
+    const rng = mulberry32(seed);
+
+    const n = entries.length;
+    const slice = (2 * Math.PI) / n;
+    const targetCenter = winnerIdx * slice + slice / 2;
+    const targetRotation = -Math.PI / 2 - targetCenter;
+    const fullSpins = 5 + Math.floor(rng() * 3);
+    const totalRotation = fullSpins * 2 * Math.PI + ((targetRotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+    const duration = 4500;
+    const start = performance.now();
+
+    $("#btn-spin").classList.add("hidden");
+
+    // Map entries to have title for drawWheel
+    const wheelEntries = entries.map(e => ({ title: e.title }));
+
+    function animate(now) {
+      const elapsed = now - start;
+      const t = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      const currentRotation = totalRotation * ease;
+
+      drawWheel(wheelEntries, currentRotation, "manual");
+
+      if (t < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        // Animation done — show result after a brief pause
+        setTimeout(() => {
+          if (currentPhase === "result" || currentPhase === "spinning") {
+            showView("result");
+            renderResult({ result: entries[winnerIdx] });
+          }
+        }, 500);
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
   $("#btn-spin").addEventListener("click", () => {
     send({ type: "spin" });
   });
 
+  // --- Confetti ---
+  let confettiAnimationId = null;
+
+  function startConfetti() {
+    const canvas = $("#confetti-canvas");
+    const ctx = canvas.getContext("2d");
+
+    // Set canvas size to window size
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particles = [];
+    const particleCount = 150;
+    const colors = ["#e63946", "#457b9d", "#2a9d8f", "#e9c46a", "#f4a261", "#a855f7", "#ec4899", "#3fb950"];
+
+    // Create particles
+    for (let i = 0; i < particleCount; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height - canvas.height,
+        size: Math.random() * 8 + 4,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        speedY: Math.random() * 3 + 2,
+        speedX: Math.random() * 4 - 2,
+        rotation: Math.random() * 360,
+        rotationSpeed: Math.random() * 10 - 5,
+        shape: Math.random() > 0.5 ? "rect" : "circle",
+      });
+    }
+
+    let startTime = performance.now();
+    const duration = 4000; // 4 seconds
+
+    function animate(now) {
+      const elapsed = now - startTime;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      particles.forEach((p) => {
+        p.y += p.speedY;
+        p.x += p.speedX;
+        p.rotation += p.rotationSpeed;
+
+        // Add some wobble
+        p.x += Math.sin(p.y * 0.02) * 0.5;
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.fillStyle = p.color;
+
+        if (p.shape === "rect") {
+          ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+        } else {
+          ctx.beginPath();
+          ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+
+        // Reset particle if it goes off screen
+        if (p.y > canvas.height + 20) {
+          p.y = -20;
+          p.x = Math.random() * canvas.width;
+        }
+      });
+
+      if (elapsed < duration) {
+        confettiAnimationId = requestAnimationFrame(animate);
+      } else {
+        // Fade out
+        fadeOutConfetti(ctx, canvas, particles, performance.now());
+      }
+    }
+
+    confettiAnimationId = requestAnimationFrame(animate);
+  }
+
+  function fadeOutConfetti(ctx, canvas, particles, startTime) {
+    const fadeDuration = 1000;
+
+    function animateFade(now) {
+      const elapsed = now - startTime;
+      const alpha = 1 - elapsed / fadeDuration;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (alpha > 0) {
+        ctx.globalAlpha = alpha;
+        particles.forEach((p) => {
+          p.y += p.speedY;
+          p.x += p.speedX;
+          p.rotation += p.rotationSpeed;
+
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate((p.rotation * Math.PI) / 180);
+          ctx.fillStyle = p.color;
+
+          if (p.shape === "rect") {
+            ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+          } else {
+            ctx.beginPath();
+            ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.restore();
+        });
+        ctx.globalAlpha = 1;
+        confettiAnimationId = requestAnimationFrame(animateFade);
+      } else {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        confettiAnimationId = null;
+      }
+    }
+
+    confettiAnimationId = requestAnimationFrame(animateFade);
+  }
+
+  function stopConfetti() {
+    if (confettiAnimationId) {
+      cancelAnimationFrame(confettiAnimationId);
+      confettiAnimationId = null;
+      const canvas = $("#confetti-canvas");
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+  }
+
   // --- Result ---
   function renderResult(state) {
     if (!state.result) return;
+    startConfetti();
     const poster = $("#result-poster");
     const posterVal = state.result.poster || "";
     if (posterVal.startsWith("/api/poster/")) {
@@ -578,15 +940,36 @@
 
   // --- Replay spin on tab focus ---
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && pendingSpin) {
-      if (pendingSpin.mode === "auto") {
-        const { seed, entries, winnerIdx } = pendingSpin;
-        pendingSpin = null;
-        startSpinAnimationAuto(seed, entries, winnerIdx);
-      } else {
-        const { seed, nominations: noms } = pendingSpin;
-        pendingSpin = null;
-        startSpinAnimation(seed, noms);
+    if (!document.hidden) {
+      // Process pending auto spins from Phase 1
+      if (pendingAutoSpins.length > 0) {
+        // Process all queued spins sequentially with a delay
+        let delay = 0;
+        pendingAutoSpins.forEach((spinData, i) => {
+          setTimeout(() => {
+            // Fast-forward: just add the card without animation
+            addSelectedMovieCard(spinData.username, spinData.selectedMovie);
+          }, delay);
+          delay += 100;
+        });
+        pendingAutoSpins = [];
+      }
+
+      // Process pending final spin
+      if (pendingSpin) {
+        if (pendingSpin.mode === "auto_final") {
+          const { seed, entries, winnerIdx } = pendingSpin;
+          pendingSpin = null;
+          startSpinAnimationAutoFinal(seed, entries, winnerIdx);
+        } else if (pendingSpin.mode === "auto") {
+          const { seed, entries, winnerIdx } = pendingSpin;
+          pendingSpin = null;
+          startSpinAnimationAuto(seed, entries, winnerIdx);
+        } else {
+          const { seed, nominations: noms } = pendingSpin;
+          pendingSpin = null;
+          startSpinAnimation(seed, noms);
+        }
       }
     }
   });

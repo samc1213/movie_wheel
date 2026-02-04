@@ -47,6 +47,18 @@
       <button id="btn-start" class="hidden">Start</button>
     </div>
 
+    <!-- Auto Selecting (Phase 1) -->
+    <div id="view-auto-selecting" class="view hidden">
+      <h1>Selecting Movies</h1>
+      <div id="selecting-progress"></div>
+      <div id="selecting-current-user"></div>
+      <canvas id="mini-wheel-canvas" width="400" height="400"></canvas>
+      <div id="selected-movies-container">
+        <h3>Selected So Far</h3>
+        <div id="selected-movies-grid" class="poster-grid mini"></div>
+      </div>
+    </div>
+
     <!-- Nominating -->
     <div id="view-nominating" class="view hidden">
       <h1>Pick Your Nomination</h1>
@@ -68,6 +80,7 @@
 
     <!-- Result -->
     <div id="view-result" class="view hidden">
+      <canvas id="confetti-canvas"></canvas>
       <h1>The Winner!</h1>
       <div id="result-card">
         <img id="result-poster" src="" alt="">

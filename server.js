@@ -31,6 +31,10 @@ function createWheel() {
     spinSeed: null,
     creatorId: null,
     createdAt: Date.now(),
+    // Auto mode Phase 1 state
+    autoSelections: [],        // Array of {username, movie: {slug, title, poster}}
+    currentSelectingIndex: 0,  // Index of user currently being selected
+    selectingUsers: [],        // Ordered list of usernames for selection
   };
   wheels.set(id, wheel);
   return wheel;
@@ -54,6 +58,9 @@ function wheelState(wheel) {
     users,
     result: wheel.result,
     creatorId: wheel.creatorId,
+    autoSelections: wheel.autoSelections,
+    currentSelectingIndex: wheel.currentSelectingIndex,
+    selectingUsers: wheel.selectingUsers,
   };
 }
 
@@ -64,6 +71,64 @@ function broadcast(wheel, msg) {
       u.ws.send(data);
     }
   }
+}
+
+// Auto mode Phase 1: Sequential selection for each user
+async function runAutoSelections(wheel, usersWithMovies) {
+  const ANIMATION_DELAY = 4000; // 4 seconds for animation
+
+  for (let i = 0; i < usersWithMovies.length; i++) {
+    wheel.currentSelectingIndex = i;
+    const user = usersWithMovies[i];
+
+    // Use full watchlist
+    const movies = user.watchlist;
+
+    // Generate random selection
+    const seed = crypto.randomInt(0, 2 ** 32);
+    const winnerIdx = seed % movies.length;
+    const selectedMovie = movies[winnerIdx];
+
+    // Resolve poster URL
+    const posterUrl = await resolvePosterUrl(selectedMovie.slug, selectedMovie.filmId || "");
+
+    // Store selection
+    const selection = {
+      username: user.username,
+      movie: {
+        slug: selectedMovie.slug,
+        title: selectedMovie.title,
+        poster: posterUrl || "",
+      },
+    };
+    wheel.autoSelections.push(selection);
+
+    // Broadcast spin to ALL clients - everyone sees the same mini-wheel
+    broadcast(wheel, {
+      type: "auto_select_spin",
+      username: user.username,
+      userIndex: i,
+      totalUsers: usersWithMovies.length,
+      movies: movies.map(m => ({ slug: m.slug, title: m.title })),
+      seed,
+      winnerIdx,
+      selectedMovie: selection.movie,
+    });
+
+    // Wait for animation to complete before moving to next user
+    await new Promise(resolve => setTimeout(resolve, ANIMATION_DELAY));
+  }
+
+  // Phase 1 complete - broadcast and transition to spinning phase
+  wheel.phase = "spinning";
+
+  broadcast(wheel, {
+    type: "auto_selections_complete",
+    selections: wheel.autoSelections,
+  });
+
+  // Also send state update
+  broadcast(wheel, { type: "state", ...wheelState(wheel) });
 }
 
 // REST: create wheel
@@ -149,7 +214,9 @@ wss.on("connection", (ws, req) => {
   }
 
   // Send current state
-  ws.send(JSON.stringify({ type: "state", ...wheelState(wheel), visitorId }));
+  const state = wheelState(wheel);
+  console.log(`[ws] sending state to ${visitorId}: ${state.users.length} users, phase=${state.phase}`);
+  ws.send(JSON.stringify({ type: "state", ...state, visitorId }));
 
   ws.on("message", async (raw) => {
     let msg;
@@ -203,6 +270,7 @@ wss.on("connection", (ws, req) => {
         wheel.users.set(visitorId, user);
         if (!wheel.creatorId) wheel.creatorId = visitorId;
 
+        console.log(`[ws] user "${username}" added, total users: ${wheel.users.size}`);
         broadcast(wheel, { type: "state", ...wheelState(wheel) });
       } catch (err) {
         console.log(`[ws] scrape failed for "${username}": ${err.message}`);
@@ -224,21 +292,34 @@ wss.on("connection", (ws, req) => {
       wheel.selectionMode = mode;
 
       if (mode === "auto") {
-        // Check if any users have movies in their watchlist
-        let hasMovies = false;
-        for (const u of wheel.users.values()) {
+        // Build list of users with watchlists
+        const usersWithMovies = [];
+        for (const [vid, u] of wheel.users) {
           if (u.watchlist.length > 0) {
-            hasMovies = true;
-            break;
+            usersWithMovies.push({ visitorId: vid, username: u.username, watchlist: u.watchlist });
           }
         }
-        if (!hasMovies) {
+        if (usersWithMovies.length === 0) {
           ws.send(JSON.stringify({ type: "error", message: "No movies available in any watchlist" }));
           return;
         }
-        // Skip nomination phase, go directly to spinning
-        wheel.phase = "spinning";
-        broadcast(wheel, { type: "state", ...wheelState(wheel) });
+
+        // Reset auto selection state
+        wheel.autoSelections = [];
+        wheel.currentSelectingIndex = 0;
+        wheel.selectingUsers = usersWithMovies.map(u => u.username);
+
+        // Set phase to auto_selecting and start Phase 1
+        wheel.phase = "auto_selecting";
+
+        // Broadcast start of auto selection
+        broadcast(wheel, {
+          type: "auto_select_start",
+          users: wheel.selectingUsers,
+        });
+
+        // Start the sequential selection process
+        runAutoSelections(wheel, usersWithMovies);
       } else {
         // Manual mode: existing logic
         wheel.phase = "nominating";
@@ -310,39 +391,30 @@ wss.on("connection", (ws, req) => {
         return;
       }
 
-      if (wheel.selectionMode === "auto") {
-        // Auto mode: build entries for users with movies
-        const entries = [];
-        const userList = [];
-        for (const u of wheel.users.values()) {
-          if (u.watchlist.length > 0) {
-            userList.push(u);
-            entries.push({ username: u.username });
-          }
-        }
+      if (wheel.selectionMode === "auto" && wheel.autoSelections.length > 0) {
+        // Auto mode with Phase 1 selections: final wheel spin
+        const entries = wheel.autoSelections.map(sel => ({
+          username: sel.username,
+          title: sel.movie.title,
+          poster: sel.movie.poster,
+          slug: sel.movie.slug,
+        }));
 
-        if (userList.length === 0) {
+        if (entries.length === 0) {
           ws.send(JSON.stringify({ type: "error", message: "No movies available" }));
           return;
         }
 
-        // Equal probability per user
+        // Equal probability per entry
         wheel.spinSeed = crypto.randomInt(0, 2 ** 32);
-        const winnerIdx = wheel.spinSeed % userList.length;
-
-        const winningUser = userList[winnerIdx];
-        // Pick random movie from winner's watchlist
-        const movieSeed = crypto.randomInt(0, winningUser.watchlist.length);
-        const winningMovie = winningUser.watchlist[movieSeed];
-
-        // Resolve poster URL
-        const posterUrl = await resolvePosterUrl(winningMovie.slug, winningMovie.filmId || "");
+        const winnerIdx = wheel.spinSeed % entries.length;
+        const winner = entries[winnerIdx];
 
         wheel.result = {
-          slug: winningMovie.slug,
-          title: winningMovie.title,
-          poster: posterUrl || "",
-          selectedFrom: winningUser.username,
+          slug: winner.slug,
+          title: winner.title,
+          poster: winner.poster,
+          selectedFrom: winner.username,
         };
         wheel.phase = "result";
 
@@ -351,7 +423,7 @@ wss.on("connection", (ws, req) => {
           seed: wheel.spinSeed,
           entries,
           winnerIdx,
-          mode: "auto",
+          mode: "auto_final",
         });
 
         // Broadcast result after animation delay

@@ -218,6 +218,16 @@ ul li .badge {
 
 #result-title { font-size: 1.5rem; }
 
+#confetti-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
 /* Result subtitle */
 .result-subtitle {
   color: #8b949e;
@@ -274,4 +284,87 @@ ul li .badge {
   h1 { font-size: 1.4rem; }
   .poster-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
   #wheel-canvas { width: 100%; }
+}
+
+/* Auto Selecting View (Phase 1) */
+#view-auto-selecting {
+  text-align: center;
+}
+
+#selecting-progress {
+  color: #8b949e;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+#selecting-current-user {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #58a6ff;
+  margin-bottom: 1rem;
+}
+
+#mini-wheel-canvas {
+  display: block;
+  margin: 0 auto 1rem;
+  max-width: 100%;
+  height: auto;
+}
+
+#selected-movies-container {
+  margin-top: 2rem;
+  text-align: left;
+}
+
+#selected-movies-container h3 {
+  color: #8b949e;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Mini poster grid for selected movies */
+.poster-grid.mini {
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 0.4rem;
+}
+
+.selected-movie-card {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+
+.selected-movie-card img {
+  width: 100%;
+  display: block;
+}
+
+.selected-movie-card .username-badge {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.85);
+  padding: 0.2rem 0.3rem;
+  font-size: 0.65rem;
+  text-align: center;
+  color: #58a6ff;
+  font-weight: 600;
+}
+
+.selected-movie-card .movie-title-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.75);
+  padding: 0.2rem 0.3rem;
+  font-size: 0.6rem;
+  text-align: center;
+  color: #e6edf3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
