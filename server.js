@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const { WebSocketServer } = require("ws");
@@ -16,6 +17,16 @@ app.use(express.static(path.join(__dirname, "public")));
 const wheels = new Map();
 const WHEEL_TTL = 24 * 60 * 60 * 1000;
 
+function mulberry32(seed) {
+  return function () {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function genId() {
   return crypto.randomBytes(3).toString("hex");
 }
@@ -26,6 +37,8 @@ function createWheel() {
     id,
     phase: "lobby",
     selectionMode: "manual", // "manual" | "auto"
+    seenFilterMode: "strict", // "strict" | "weighted" | "disabled"
+    runtimeLimit: 180,
     users: new Map(),
     result: null,
     spinSeed: null,
@@ -41,12 +54,28 @@ function createWheel() {
 }
 
 function wheelState(wheel) {
+  // Build union of all watched slugs per user (excluding their own)
+  const otherWatchedMap = new Map();
+  for (const [vid] of wheel.users) {
+    const others = new Set();
+    for (const [ovid, ou] of wheel.users) {
+      if (ovid !== vid) {
+        for (const s of ou.watchedSlugs) others.add(s);
+      }
+    }
+    otherWatchedMap.set(vid, others);
+  }
+
   const users = [];
   for (const [vid, u] of wheel.users) {
+    const otherWatched = otherWatchedMap.get(vid);
+    const seenCount = u.watchlist.filter((m) => otherWatched.has(m.slug)).length;
     users.push({
       visitorId: vid,
       username: u.username,
       watchlistCount: u.watchlist.length,
+      seenCount,
+      watchedAvailable: u.watchedSlugs.size > 0,
       nomination: u.nomination,
       ready: u.nomination !== null,
     });
@@ -55,6 +84,8 @@ function wheelState(wheel) {
     id: wheel.id,
     phase: wheel.phase,
     selectionMode: wheel.selectionMode,
+    seenFilterMode: wheel.seenFilterMode,
+    runtimeLimit: wheel.runtimeLimit,
     users,
     result: wheel.result,
     creatorId: wheel.creatorId,
@@ -74,20 +105,62 @@ function broadcast(wheel, msg) {
 }
 
 // Auto mode Phase 1: Sequential selection for each user
+function seenByCount(wheel, userId, slug) {
+  let count = 0;
+  for (const [vid, u] of wheel.users) {
+    if (vid !== userId && u.watchedSlugs.has(slug)) count++;
+  }
+  return count;
+}
+
 async function runAutoSelections(wheel, usersWithMovies) {
   const ANIMATION_DELAY = 4000; // 4 seconds for animation
+  const filterMode = wheel.seenFilterMode;
 
   for (let i = 0; i < usersWithMovies.length; i++) {
     wheel.currentSelectingIndex = i;
     const user = usersWithMovies[i];
 
-    // Use full watchlist
-    const movies = user.watchlist;
+    // Annotate movies with seen counts
+    const movies = user.watchlist.map((m) => ({
+      ...m,
+      seenByCount: seenByCount(wheel, user.visitorId, m.slug),
+    }));
+
+    // Determine candidate pool by seen filter
+    let pool;
+    if (filterMode === "strict") {
+      pool = movies.filter((m) => m.seenByCount === 0);
+      if (pool.length === 0) pool = movies; // fallback: all movies
+    } else {
+      pool = movies;
+    }
+
+    // Apply runtime limit (fetch runtimes and filter)
+    if (wheel.runtimeLimit > 0) {
+      const runtimes = await Promise.all(pool.map((m) => getRuntime(m.title, yearFromSlug(m.slug))));
+      const limited = pool.filter((_, i) => !runtimes[i] || runtimes[i] <= wheel.runtimeLimit);
+      if (limited.length > 0) pool = limited;
+      console.log(`[auto] runtime filter (≤${wheel.runtimeLimit}m): ${pool.length} → ${limited.length || pool.length} movies for ${user.username}`);
+    }
 
     // Generate random selection
     const seed = crypto.randomInt(0, 2 ** 32);
-    const winnerIdx = seed % movies.length;
-    const selectedMovie = movies[winnerIdx];
+    let winnerIdx;
+    if (filterMode === "weighted") {
+      const rng = mulberry32(seed);
+      const weights = pool.map((m) => 1 / (m.seenByCount + 1));
+      const total = weights.reduce((a, b) => a + b, 0);
+      let r = rng() * total;
+      winnerIdx = pool.length - 1;
+      for (let j = 0; j < pool.length; j++) {
+        r -= weights[j];
+        if (r <= 0) { winnerIdx = j; break; }
+      }
+    } else {
+      winnerIdx = seed % pool.length;
+    }
+    const selectedMovie = pool[winnerIdx];
 
     // Resolve poster URL
     const posterUrl = await resolvePosterUrl(selectedMovie.slug, selectedMovie.filmId || "");
@@ -109,7 +182,7 @@ async function runAutoSelections(wheel, usersWithMovies) {
       username: user.username,
       userIndex: i,
       totalUsers: usersWithMovies.length,
-      movies: movies.map(m => ({ slug: m.slug, title: m.title })),
+      movies: pool.map(m => ({ slug: m.slug, title: m.title })),
       seed,
       winnerIdx,
       selectedMovie: selection.movie,
@@ -156,9 +229,7 @@ app.get("/api/search", async (req, res) => {
   const q = (req.query.q || "").trim();
   if (!q) return res.json([]);
   try {
-    const r = await fetch(`https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(q)}&page=1`, {
-      headers: { Authorization: `Bearer ${TMDB_TOKEN}` },
-    });
+    const r = await fetch(`https://api.themoviedb.org/3/search/movie?api_key=${TMDB_TOKEN}&query=${encodeURIComponent(q)}&page=1`);
     if (!r.ok) return res.json([]);
     const data = await r.json();
     const results = (data.results || []).slice(0, 8).map((m) => ({
@@ -171,6 +242,51 @@ app.get("/api/search", async (req, res) => {
   } catch {
     res.json([]);
   }
+});
+
+const runtimeCache = new Map();
+
+function yearFromSlug(slug) {
+  const m = (slug || "").match(/-(\d{4})$/);
+  return m ? m[1] : null;
+}
+
+async function getRuntime(title, year) {
+  const key = `${title.toLowerCase()}:${year || ""}`;
+  if (runtimeCache.has(key)) return runtimeCache.get(key);
+  if (!TMDB_TOKEN) return null;
+  try {
+    const yearParam = year ? `&primary_release_year=${year}` : "";
+    const searchRes = await fetch(
+      `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_TOKEN}&query=${encodeURIComponent(title)}&page=1${yearParam}`
+    );
+    console.log(`[runtime] search "${title}" (${year || "no year"}) → HTTP ${searchRes.status}`);
+    const searchData = await searchRes.json();
+    const first = (searchData.results || [])[0];
+    if (!first) { runtimeCache.set(key, null); return null; }
+    console.log(`[runtime] matched "${title}" → TMDB id ${first.id} "${first.title}" (${first.release_date})`);
+    const detailRes = await fetch(
+      `https://api.themoviedb.org/3/movie/${first.id}?api_key=${TMDB_TOKEN}`
+    );
+    const detail = await detailRes.json();
+    const runtime = detail.runtime || null;
+    console.log(`[runtime] "${title}" runtime → ${runtime}`);
+    runtimeCache.set(key, runtime);
+    return runtime;
+  } catch (err) {
+    console.log(`[runtime] error for "${title}": ${err.message}`);
+    return null;
+  }
+}
+
+app.get("/api/runtime", async (req, res) => {
+  const title = (req.query.title || "").trim();
+  const year = (req.query.year || "").trim() || null;
+  if (!title) return res.json({ runtime: null });
+  if (!TMDB_TOKEN) { console.log("[runtime] no TMDB_TOKEN"); return res.json({ runtime: null }); }
+  const key = `${title.toLowerCase()}:${year || ""}`;
+  if (runtimeCache.has(key)) console.log(`[runtime] cache hit "${title}" → ${runtimeCache.get(key)}`);
+  res.json({ runtime: await getRuntime(title, year) });
 });
 
 // Cleanup expired wheels periodically
@@ -290,6 +406,8 @@ wss.on("connection", (ws, req) => {
 
       const mode = msg.selectionMode || "manual";
       wheel.selectionMode = mode;
+      wheel.seenFilterMode = msg.seenFilterMode || "strict";
+      wheel.runtimeLimit = msg.runtimeLimit > 0 ? msg.runtimeLimit : 0;
 
       if (mode === "auto") {
         // Build list of users with watchlists
@@ -324,17 +442,14 @@ wss.on("connection", (ws, req) => {
         // Manual mode: existing logic
         wheel.phase = "nominating";
 
-        // Send each user their eligible watchlist
+        // Broadcast state first so clients have seenFilterMode before rendering watchlist
+        broadcast(wheel, { type: "state", ...wheelState(wheel) });
+
+        // Then send each user their eligible watchlist
         for (const [vid, u] of wheel.users) {
-          const otherWatched = new Set();
-          for (const [ovid, ou] of wheel.users) {
-            if (ovid !== vid) {
-              for (const s of ou.watchedSlugs) otherWatched.add(s);
-            }
-          }
           const eligible = u.watchlist.map((m) => ({
             ...m,
-            seenByOther: otherWatched.has(m.slug),
+            seenByCount: seenByCount(wheel, vid, m.slug),
           }));
           if (u.ws && u.ws.readyState === 1) {
             u.ws.send(JSON.stringify({
@@ -343,8 +458,6 @@ wss.on("connection", (ws, req) => {
             }));
           }
         }
-
-        broadcast(wheel, { type: "state", ...wheelState(wheel) });
       }
 
     } else if (msg.type === "nominate") {

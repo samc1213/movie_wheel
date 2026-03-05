@@ -15,6 +15,8 @@
   let creatorId = null;
   let pendingSpin = null; // { seed, nominations, mode?, entries?, winnerIdx? } if spin_start arrived while hidden
   let selectionMode = "manual";
+  let seenFilterMode = "strict";
+  let runtimeLimit = 180;
   let joining = false;
   let shouldReconnect = true;
 
@@ -199,6 +201,8 @@
     currentPhase = state.phase;
     if (state.creatorId) creatorId = state.creatorId;
     if (state.selectionMode) selectionMode = state.selectionMode;
+    if (state.seenFilterMode) seenFilterMode = state.seenFilterMode;
+    if (state.runtimeLimit !== undefined) runtimeLimit = state.runtimeLimit;
 
     if (state.phase === "lobby") {
       showView("lobby");
@@ -296,7 +300,13 @@
     ul.innerHTML = "";
     state.users.forEach((u) => {
       const li = document.createElement("li");
-      li.innerHTML = `<span>${u.username}</span><span class="badge">${u.watchlistCount} films</span>`;
+      let seenBadge = "";
+      if (!u.watchedAvailable) {
+        seenBadge = `<span class="badge badge-private">watched private</span>`;
+      } else if (u.seenCount > 0) {
+        seenBadge = `<span class="badge badge-seen">${u.seenCount} seen</span>`;
+      }
+      li.innerHTML = `<span class="user-name">${u.username}</span><span class="user-badges"><span class="badge">${u.watchlistCount} films</span>${seenBadge}</span>`;
       ul.appendChild(li);
     });
 
@@ -305,21 +315,31 @@
     const isCreator = state.creatorId === visitorId;
     const startBtn = $("#btn-start");
     const modeSelector = $("#mode-selector");
+    const seenFilterSelector = $("#seen-filter-selector");
+    const runtimeLimitSelector = $("#runtime-limit-selector");
     if (isCreator && state.users.length >= 2) {
       startBtn.classList.remove("hidden");
       modeSelector.classList.remove("hidden");
+      seenFilterSelector.classList.remove("hidden");
+      runtimeLimitSelector.classList.remove("hidden");
       $("#lobby-status").textContent = "";
     } else if (isCreator && state.users.length === 1) {
       startBtn.classList.add("hidden");
       modeSelector.classList.add("hidden");
+      seenFilterSelector.classList.add("hidden");
+      runtimeLimitSelector.classList.add("hidden");
       $("#lobby-status").textContent = "Share the link above — at least one other person needs to join before you can start.";
     } else if (!isCreator && alreadyJoined) {
       startBtn.classList.add("hidden");
       modeSelector.classList.add("hidden");
+      seenFilterSelector.classList.add("hidden");
+      runtimeLimitSelector.classList.add("hidden");
       $("#lobby-status").textContent = "Waiting for the wheel creator to start.";
     } else {
       startBtn.classList.add("hidden");
       modeSelector.classList.add("hidden");
+      seenFilterSelector.classList.add("hidden");
+      runtimeLimitSelector.classList.add("hidden");
       $("#lobby-status").textContent = "";
     }
   }
@@ -343,7 +363,9 @@
 
   $("#btn-start").addEventListener("click", () => {
     const mode = document.querySelector('input[name="selection-mode"]:checked')?.value || "manual";
-    send({ type: "start_nominations", selectionMode: mode });
+    const seenFilter = document.querySelector('input[name="seen-filter"]:checked')?.value || "strict";
+    const rtLimit = parseInt($("#runtime-limit").value, 10) || 0;
+    send({ type: "start_nominations", selectionMode: mode, seenFilterMode: seenFilter, runtimeLimit: rtLimit });
   });
 
   // --- Nomination ---
@@ -365,31 +387,56 @@
     grid.innerHTML = "";
     selectedSlug = null;
 
-    const eligible = myWatchlist.filter((m) => !m.seenByOther);
-    if (eligible.length === 0) {
-      // No eligible watchlist films — search box is always visible
-    }
-
     myWatchlist.forEach((m) => {
+      const isSeen = m.seenByCount > 0;
+      const isDisabled = seenFilterMode === "strict" && isSeen;
+
       const card = document.createElement("div");
-      card.className = "poster-card" + (m.seenByOther ? " seen" : "");
+      card.className = "poster-card" + (isDisabled ? " seen" : "");
+
       const img = document.createElement("img");
       img.alt = m.title;
       img.loading = "lazy";
-      img.src = ""; // resolved below
+      img.src = "";
       card.appendChild(img);
+
       const label = document.createElement("div");
       label.className = "poster-title";
       label.textContent = m.title;
       card.appendChild(label);
 
-      // Resolve real poster URL via proxy
+      const runtime = document.createElement("div");
+      runtime.className = "poster-runtime";
+      card.appendChild(runtime);
+      const yearMatch = m.slug && m.slug.match(/-(\d{4})$/);
+      const yearParam = yearMatch ? `&year=${yearMatch[1]}` : "";
+      fetch(`/api/runtime?title=${encodeURIComponent(m.title)}${yearParam}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.runtime) {
+            runtime.textContent = `${d.runtime}m`;
+            if (runtimeLimit > 0 && d.runtime > runtimeLimit) {
+              card.dataset.runtimeExceeded = "1";
+              card.classList.add("seen");
+            }
+          }
+        })
+        .catch(() => {});
+
+      if (seenFilterMode === "weighted" && isSeen) {
+        const badge = document.createElement("div");
+        badge.className = "seen-count-badge";
+        badge.textContent = `${m.seenByCount} seen`;
+        card.appendChild(badge);
+      }
+
       fetch(m.poster).then(r => r.json()).then(d => {
         if (d.url) img.src = d.url;
       }).catch(() => {});
 
-      if (!m.seenByOther) {
+      if (!isDisabled) {
         card.addEventListener("click", () => {
+          if (card.dataset.runtimeExceeded) return;
           grid.querySelectorAll(".poster-card").forEach((c) => c.classList.remove("selected"));
           card.classList.add("selected");
           selectedSlug = m.slug;
@@ -927,6 +974,23 @@
       poster.classList.add("hidden");
     }
     $("#result-title").textContent = state.result.title;
+
+    const resultRuntime = $("#result-runtime");
+    resultRuntime.textContent = "";
+    const resultYearMatch = state.result.slug && state.result.slug.match(/-(\d{4})$/);
+    const resultYearParam = resultYearMatch ? `&year=${resultYearMatch[1]}` : "";
+    fetch(`/api/runtime?title=${encodeURIComponent(state.result.title)}${resultYearParam}`)
+      .then(r => r.json())
+      .then(d => { if (d.runtime) resultRuntime.textContent = `${d.runtime} min`; })
+      .catch(() => {});
+
+    const lbLink = $("#result-lb-link");
+    if (state.result.slug) {
+      lbLink.href = `https://letterboxd.com/film/${state.result.slug}/`;
+      lbLink.classList.remove("hidden");
+    } else {
+      lbLink.classList.add("hidden");
+    }
 
     // Show subtitle for auto mode
     const subtitle = $("#result-subtitle");

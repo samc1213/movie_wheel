@@ -44,6 +44,28 @@
           <span>Auto</span> - Random from all watchlists
         </label>
       </div>
+      <div id="seen-filter-selector" class="mode-selector hidden">
+        <p class="mode-label">Seen Movies</p>
+        <label class="mode-option">
+          <input type="radio" name="seen-filter" value="strict" checked>
+          <span>Strict</span> - Exclude movies seen by others
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="seen-filter" value="weighted">
+          <span>Weighted</span> - Less likely if seen by others
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="seen-filter" value="disabled">
+          <span>Disabled</span> - Ignore seen status
+        </label>
+      </div>
+      <div id="runtime-limit-selector" class="mode-selector hidden">
+        <p class="mode-label">Max Runtime</p>
+        <div class="runtime-limit-row">
+          <input type="number" id="runtime-limit" value="180" min="0" max="600" step="5">
+          <span>min &nbsp;(0 = no limit)</span>
+        </div>
+      </div>
       <button id="btn-start" class="hidden">Start</button>
     </div>
 
@@ -85,6 +107,8 @@
       <div id="result-card">
         <img id="result-poster" src="" alt="">
         <h2 id="result-title"></h2>
+        <p id="result-runtime" class="result-runtime"></p>
+        <a id="result-lb-link" class="result-lb-link hidden" target="_blank" rel="noopener">View on Letterboxd</a>
         <p id="result-subtitle" class="result-subtitle hidden"></p>
       </div>
     </div>

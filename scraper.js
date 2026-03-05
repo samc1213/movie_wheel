@@ -1,4 +1,40 @@
 const cheerio = require("cheerio");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+puppeteer.use(StealthPlugin());
+
+let _browser = null;
+async function getBrowser() {
+  if (_browser && _browser.isConnected()) return _browser;
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+  _browser = await puppeteer.launch({
+    headless: true,
+    executablePath,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  });
+  console.log("[scraper] browser launched");
+  return _browser;
+}
+
+async function fetchPageWithBrowser(url) {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    console.log(`[scraper] browser fetching ${url}`);
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+    // Wait for Cloudflare "Just a moment..." to resolve
+    if ((await page.title()).includes("Just a moment")) {
+      console.log(`[scraper] waiting for Cloudflare challenge...`);
+      await page.waitForFunction(
+        () => !document.title.includes("Just a moment"),
+        { timeout: 15000 }
+      );
+    }
+    return await page.content();
+  } finally {
+    await page.close();
+  }
+}
 
 const cache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
@@ -100,40 +136,36 @@ async function scrapeWatched(username) {
   const cached = getCached(key);
   if (cached) return cached;
 
-  // The /films/ page is often blocked by Cloudflare challenges when scraped.
-  // Try to fetch it, but return empty set on failure (graceful degradation).
   console.log(`[scraper] scraping watched films for "${username}"`);
   const slugs = new Set();
-  const urls = Array.from({ length: 10 }, (_, i) =>
-    `https://letterboxd.com/${username}/films/page/${i + 1}/`
-  );
-  const pages = await Promise.all(urls.map((url, i) =>
-    fetchPage(url).catch((err) => {
-      console.log(`[scraper] watched page ${i + 1} failed: ${err.message}`);
-      return null;
-    })
-  ));
 
-  for (const html of pages) {
-    if (!html) continue;
-    const $ = cheerio.load(html);
-    const items = $("li.griditem");
-    if (items.length === 0) {
-      const alt = $("li.poster-container");
-      if (alt.length === 0) continue;
-      alt.each((_, el) => {
-        const div = $(el).find("div[data-target-link]");
-        const slug = extractSlugFromLink(div.attr("data-target-link"));
-        if (slug) slugs.add(slug);
-      });
-      continue;
+  for (let i = 0; i < 20; i++) {
+    const url = `https://letterboxd.com/${username}/films/page/${i + 1}/`;
+    let html;
+    try {
+      html = await fetchPageWithBrowser(url);
+    } catch (err) {
+      console.log(`[scraper] watched page ${i + 1} failed: ${err.message}`);
+      break; // stop on first failure (403 = private or end of pages)
     }
 
-    items.each((_, el) => {
-      const container = $(el).find("div[data-target-link]");
-      const slug = extractSlugFromLink(container.attr("data-target-link"));
-      if (slug) slugs.add(slug);
-    });
+    const $ = cheerio.load(html);
+    const before = slugs.size;
+
+    const bySlug = $("div[data-film-slug]");
+    if (bySlug.length > 0) {
+      bySlug.each((_, el) => {
+        const slug = $(el).attr("data-film-slug");
+        if (slug) slugs.add(slug);
+      });
+    } else {
+      $("div[data-target-link]").each((_, el) => {
+        const slug = extractSlugFromLink($(el).attr("data-target-link"));
+        if (slug) slugs.add(slug);
+      });
+    }
+
+    if (slugs.size === before) break; // no new films = last page
   }
 
   console.log(`[scraper] watched films for "${username}": ${slugs.size} slugs`);

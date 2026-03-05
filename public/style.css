@@ -65,13 +65,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border-radius: 6px;
   padding: 0.8rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 1rem;
 }
 
-.share-box label { color: #8b949e; white-space: nowrap; }
-.share-box input { font-size: 0.85rem; }
+.share-box label { color: #8b949e; white-space: nowrap; flex: 0 0 100%; }
+.share-box input { font-size: 0.85rem; flex: 1 1 0; min-width: 0; }
+.share-box button { flex-shrink: 0; }
 
 .status {
   color: #d29922;
@@ -94,9 +96,27 @@ ul li {
   justify-content: space-between;
 }
 
+ul li .user-badges {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 ul li .badge {
   font-size: 0.8rem;
   color: #3fb950;
+}
+
+ul li .badge-seen {
+  font-size: 0.8rem;
+  color: #8b949e;
+}
+
+ul li .badge-private {
+  font-size: 0.8rem;
+  color: #6e7681;
+  font-style: italic;
 }
 
 /* Poster grid */
@@ -120,6 +140,19 @@ ul li .badge {
 .poster-card.seen { opacity: 0.3; pointer-events: none; }
 .poster-card.selected { border-color: #3fb950; }
 
+.seen-count-badge {
+  position: absolute;
+  bottom: 26px;
+  left: 0;
+  right: 0;
+  background: rgba(233, 196, 106, 0.85);
+  color: #1a1a1a;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 2px 0;
+}
+
 .poster-card img {
   width: 100%;
   display: block;
@@ -134,6 +167,17 @@ ul li .badge {
   padding: 0.3rem;
   font-size: 0.7rem;
   text-align: center;
+}
+
+.poster-card .poster-runtime {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0,0,0,0.7);
+  color: #8b949e;
+  font-size: 0.6rem;
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 
 /* Search dropdown */
@@ -228,6 +272,21 @@ ul li .badge {
   z-index: 10;
 }
 
+.result-runtime {
+  color: #8b949e;
+  font-size: 0.95rem;
+  margin: 0.25rem 0;
+}
+
+.result-lb-link {
+  display: inline-block;
+  margin: 0.4rem 0;
+  color: #58a6ff;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.result-lb-link:hover { text-decoration: underline; }
+
 /* Result subtitle */
 .result-subtitle {
   color: #8b949e;
@@ -258,6 +317,26 @@ ul li .badge {
 
 .mode-option input {
   margin-right: 0.5rem;
+}
+
+.runtime-limit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  color: #e6edf3;
+  font-size: 0.95rem;
+}
+
+.runtime-limit-row input {
+  width: 70px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.95rem;
+}
+
+.runtime-limit-row span {
+  color: #8b949e;
 }
 
 .mode-option span {
